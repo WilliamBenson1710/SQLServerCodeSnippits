@@ -1,0 +1,100 @@
+USE [DBMaint]
+GO
+/****** Object:  StoredProcedure [Utilities].[uspCheckMailProfileToUse]    Script Date: 8/5/2021 9:28:05 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+/*************************************************************************************************
+*** OBJECT NAME                                                                                ***
+**************************************************************************************************
+[Utilities].[spCheckMailProfileToUse]
+
+**************************************************************************************************
+*** DESCRIPTION                                                                                ***
+**************************************************************************************************
+Check to see if a mail profile is on the server and if its not it picks a default
+**************************************************************************************************
+*** CHANGE HISTORY                                                                             ***
+**************************************************************************************************
+2018-12-08: Created by william benson
+
+**************************************************************************************************
+*** PERFORMANCE HISTORY                                                                        ***
+**************************************************************************************************
+ 
+**************************************************************************************************
+*** TEST SCRIPT                                                                                ***
+**************************************************************************************************
+USE DBMaint
+GO
+
+EXEC [Utilities].[spCheckMailProfileToUse]
+@MailProfileToSearchFor = 'DCYF Database Server Notifications111'
+
+**************************************************************************************************/
+ALTER PROCEDURE [Utilities].[uspCheckMailProfileToUse]
+	@MailProfileToSearchFor NVARCHAR(250) = NULL
+	, @ProfileNameToUse NVARCHAR(250) OUTPUT
+
+AS
+
+BEGIN
+
+SET NOCOUNT ON;
+
+	--DECLARE @ProfileNameToUse NVARCHAR(250);
+	
+	/* Used for the details of the exception */
+	DECLARE @ErrMsg NVARCHAR(4000)
+	, @ErrorMessage NVARCHAR(4000)
+	, @ErrorSeverity SMALLINT
+	, @E_DatabaseName VARCHAR(100)
+	, @E_SchemaName VARCHAR(100)
+	, @E_ProcedureName VARCHAR(255)
+	, @E_ErrorLineNumber AS SMALLINT
+	;
+
+	BEGIN TRY
+
+		IF @MailProfileToSearchFor IS NULL
+		BEGIN
+			SET @ErrMsg = 'Sorry the mail profile can not be empty';
+			RAISERROR (@ErrMsg, 18, 1);
+
+		END
+
+		IF EXISTS(SELECT Profile_Id FROM msdb.dbo.sysmail_profile WHERE [NAME] = @MailProfileToSearchFor)
+		BEGIN
+			SELECT @ProfileNameToUse = @MailProfileToSearchFor
+		END
+		ELSE
+		BEGIN
+	
+			SELECT @ProfileNameToUse = sysmp.[Name]
+			FROM msdb.dbo.sysmail_principalprofile AS sysmpp
+			INNER JOIN msdb.dbo.sysmail_profile AS sysmp
+				ON sysmpp.profile_id = sysmp.profile_id
+			WHERE sysmpp.is_default = 1
+
+		END
+
+		RETURN;
+
+	END TRY
+	BEGIN CATCH
+		 
+		SELECT @ErrorSeverity = ERROR_SEVERITY()
+		, @ErrorMessage = ERROR_MESSAGE()
+		, @E_DatabaseName = DB_NAME()
+		, @E_SchemaName = OBJECT_SCHEMA_NAME(@@PROCID)
+		, @E_ProcedureName = OBJECT_NAME(@@PROCID) 
+		, @E_ErrorLineNumber = ERROR_LINE();                   
+                
+		SET @ErrMsg = @ErrorMessage + ' Occurred at Line_Number: ' + CAST(ERROR_LINE() AS VARCHAR(50)) + ' (Severity ' + CAST(@ErrorSeverity AS VARCHAR) + ')'
+		RAISERROR (@ErrMsg, 18, 1) ;		
+		
+	END CATCH
+
+	
+END
