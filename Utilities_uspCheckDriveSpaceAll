@@ -1,0 +1,157 @@
+USE [DBName]
+GO
+/****** Object:  StoredProcedure [Utilities].[uspCheckDriveSpaceAll]    Script Date: 8/5/2021 9:22:00 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+/*************************************************************************************************
+*** OBJECT NAME                                                                                ***
+**************************************************************************************************
+Utilities.spCheckDriveSpaceAll
+
+**************************************************************************************************
+*** DESCRIPTION                                                                                ***
+**************************************************************************************************
+Use xp_cmdshelll to get a list of the drives on the server.
+**************************************************************************************************
+*** CHANGE HISTORY                                                                             ***
+**************************************************************************************************
+2019-04-15: Created by William Benson
+2020-10-07: William Benson - Added in try catch and error message
+
+**************************************************************************************************
+*** PERFORMANCE HISTORY                                                                        ***
+**************************************************************************************************
+
+**************************************************************************************************
+*** TEST SCRIPT                                                                                ***
+**************************************************************************************************
+EXEC DBMaint.Utilities.spCheckDriveSpaceAll
+
+**************************************************************************************************/
+ALTER PROCEDURE [Utilities].[uspCheckDriveSpaceAll]
+	@Debug BIT = 0
+
+AS
+
+BEGIN
+
+    SET NOCOUNT ON;
+
+    /* Used for the details of the exception */
+	DECLARE @ErrMsg NVARCHAR(4000)
+	, @ErrorMessage NVARCHAR(4000)
+	, @ErrorSeverity SMALLINT
+	, @E_DatabaseName VARCHAR(100)
+	, @E_SchemaName VARCHAR(100)
+	, @E_ProcedureName VARCHAR(255)
+	, @E_ErrorLineNumber AS SMALLINT
+	;
+
+    DECLARE @chkCMDShell AS SQL_VARIANT
+
+    BEGIN TRY
+
+        EXEC sp_configure 'show advanced options', 1;
+        RECONFIGURE;
+
+        SELECT @chkCMDShell = value FROM sys.configurations WHERE name = 'xp_cmdshell'
+        IF @chkCMDShell = 0
+        BEGIN
+	        EXEC sp_configure 'xp_cmdshell', 1
+	        RECONFIGURE;
+        END
+        ELSE
+        BEGIN
+           PRINT 'xp_cmdshell is already enabled'
+        END
+
+        --GO
+        DECLARE @svrName VARCHAR(255)
+        DECLARE @sql VARCHAR(400)
+        --by default it will take the current server name, we can the set the server name as well
+        SELECT @svrName = @@SERVERNAME
+        --set @sql = 'powershell.exe -c "Get-WmiObject -ComputerName ' + QUOTENAME(@svrName,'''') + ' -Class Win32_Volume -Filter ''DriveType = 3'' | select name,capacity,freespace | foreach{$_.name+''|''+$_.capacity/1048576+''%''+$_.freespace/1048576+''*''} | format-table"'
+        SELECT @sql = 'powershell.exe -c "Get-WmiObject -ComputerName ' + QUOTENAME(@svrName,'''') + ' -Class Win32_Volume -Filter ''DriveType = 3'' | select name,label,capacity,freespace | foreach{$_.name+''|''+$_.label+''|''+$_.capacity/1048576+''%''+$_.freespace/1048576+''*''}"'
+        --set @sql = 'powershell.exe -c "Get-Volume"'
+        --creating a temporary table
+        DECLARE @DriveSpaceTable AS TABLE(Line varchar(255)) -- #output
+
+        --inserting disk name, total space and free space value in to temporary table
+        INSERT @DriveSpaceTable
+        EXEC xp_cmdshell @sql
+        ;
+
+        TRUNCATE TABLE [Detail].[HardDriveSpace]
+        INSERT INTO [Detail].[HardDriveSpace]
+                   ([ServerName]
+                   ,[OSDriveLetter]
+                   ,[DriveLetter]
+                   ,[DriveLabel]
+                   ,[Capacity]
+                   ,[Freespace])
+        SELECT @@SERVERNAME AS ServerName
+	        ,REPLACE(RTRIM(LTRIM(SUBSTRING(line,1,CHARINDEX('|',line) -1))),':\','') AS OSDriveLetter
+	        ,RTRIM(LTRIM(SUBSTRING(line,1,CHARINDEX('|',line) -1))) AS driveletter
+	        ,SUBSTRING(line,CHARINDEX('|',line)+1,CASE WHEN (CHARINDEX('|',line,5) - CHARINDEX('|',line)) = 1 THEN NULL
+		        ELSE (CHARINDEX('|',line,5)  - CHARINDEX('|',line)-1) END) AS drivelabel
+           ,ROUND(CAST(RTRIM(LTRIM(SUBSTRING(line,CHARINDEX('|',line,5)+1,(CHARINDEX('%',line) -1)-CHARINDEX('|',line,5)))) AS FLOAT),0) AS 'capacity(GB)'
+           ,ROUND(CAST(RTRIM(LTRIM(SUBSTRING(line,CHARINDEX('%',line)+1,(CHARINDEX('*',line) -1)-CHARINDEX('%',line)))) AS FLOAT),0)AS 'freespace(GB)'
+        FROM @DriveSpaceTable
+        WHERE CHARINDEX('?',line) = 0
+        --where line like '[A-Z][:]%'
+        --order by drivename
+        --script to drop the temporary table
+        --DROP TABLE #output
+        --GO
+
+
+        SELECT @chkCMDShell = value FROM sys.configurations WHERE name = 'xp_cmdshell'
+
+        IF @chkCMDShell = 1
+        BEGIN
+        EXEC sp_configure 'xp_cmdshell', 0
+        RECONFIGURE;
+        END
+        ELSE
+        BEGIN
+        PRINT 'xp_cmdshell is already enabled'
+        END
+
+        EXEC sp_configure 'show advanced options', 0;
+        RECONFIGURE;
+
+    END TRY
+    BEGIN CATCH
+
+        SELECT @chkCMDShell = value FROM sys.configurations WHERE name = 'xp_cmdshell'
+
+        IF @chkCMDShell = 1
+        BEGIN
+        EXEC sp_configure 'xp_cmdshell', 0
+        RECONFIGURE;
+        END
+        ELSE
+        BEGIN
+        PRINT 'xp_cmdshell is already enabled'
+        END
+
+        EXEC sp_configure 'show advanced options', 0;
+        RECONFIGURE;
+
+        SELECT @ErrorSeverity = ERROR_SEVERITY()
+		, @ErrorMessage = ERROR_MESSAGE()
+		, @E_DatabaseName = DB_NAME()
+		, @E_SchemaName = OBJECT_SCHEMA_NAME(@@PROCID)
+		, @E_ProcedureName = OBJECT_NAME(@@PROCID) 
+		, @E_ErrorLineNumber = ERROR_LINE();                   
+                
+		SET @ErrMsg = @ErrorMessage + ' Occurred at Line_Number: ' + CAST(ERROR_LINE() AS VARCHAR(50)) + ' (Severity ' + CAST(@ErrorSeverity AS VARCHAR) + ')'
+		RAISERROR (@ErrMsg, 18, 1) ;
+
+
+    END CATCH
+
+
+END
