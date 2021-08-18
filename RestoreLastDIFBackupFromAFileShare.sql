@@ -10,6 +10,17 @@ GO
 -- Create date: 12/12/2017
 -- Description:	Restore the last full backup from a fileshare by checking the fileshare and finding the latest file
 --				Please note, this currently doesn't do a with move statement.
+DECLARE	@return_value int
+/*
+EXEC	@return_value = [BackupRestore].[RestoreLastDIFBackupFromAFileShare]
+		@DatabasesToRestoreParam = N'Attendance',
+		@FilePathParam = N'\\Dcyfolyut10015\etl\Production\DELOLYDB12009\'
+
+SELECT	'Return Value' = @return_value
+
+GO
+*/
+
 -- =============================================
 ALTER   PROCEDURE [BackupRestore].[RestoreLastDIFBackupFromAFileShare]
 (
